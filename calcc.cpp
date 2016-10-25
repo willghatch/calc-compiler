@@ -38,6 +38,8 @@ static int error(char* msg){
 }
 
 /////////////////////////// lex /////////////////////////////
+// TODO - I can use `auto mb = memorybuffer::getstdin()` (with some uppercase letters)
+//        to get a big buffer of the characters, rather than using getc and ungetc.
 
 static void ignore_to_newline(){
     char c = getchar();
