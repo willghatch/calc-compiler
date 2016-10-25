@@ -45,10 +45,23 @@ static void ignore_to_newline(){
     ungetchar(c);
 }
 
-static int64_t read_int_const(int64_t so_far){
+static int64_t read_int_const(int64_t so_far, bool negativep){
     int c = getchar();
+    int64_t last;
     while(c >= '0' && c <= '9'){
-        so_far = 10*so_far + c-'0';
+        last = so_far;
+        so_far *= 10;
+        if(negativep){
+            so_far -= c-'0';
+            if(so_far > last){
+                error("integer overflow negative to positive");
+            }
+        } else {
+            so_far += c-'0';
+            if(so_far < last){
+                error("integer overflow positive to negative");
+            }
+        }
         c = getchar();
     }
     ungetchar(c);
@@ -81,13 +94,13 @@ static Token lex_one(){
     } else if (')' == c){
         return {Token::rparen,0};
     } else if (c >= '0' && c <= '9'){
-        int64_t num = read_int_const(c-'0');
+        int64_t num = read_int_const(c-'0',false);
         return {Token::intconst,num};
     } else if ('-' == c){
         c = getchar();
         if (c >= '0' && c <= '9'){
-            int64_t num = read_int_const(c - '0');
-            Token ret = {Token::intconst, num*-1};
+            int64_t num = read_int_const(-(c - '0'),true);
+            Token ret = {Token::intconst, num};
             return ret;
         } else {
             ungetchar(c);
@@ -132,7 +145,7 @@ static Token lex_one(){
             error("expected = character after =");
         }
     } else if ('a' == c){
-        int64_t num = read_int_const(0);
+        int64_t num = read_int_const(0,false);
         return {Token::programarg,num};
     } else if ('f' == c){
         // for now, assume it's false
@@ -143,7 +156,7 @@ static Token lex_one(){
         // for now, assume it's true
         (getchar() == 'r' && getchar() == 'u' && getchar() == 'e')
             || error("error lexing true");
-        return {Token::boolconst,0};
+        return {Token::boolconst,1};
     } else if ('i' == c){
         // for now, assume it's if
         (getchar() == 'f') || error("error lexing true");
@@ -158,37 +171,35 @@ static Token lex_one(){
 
 
 /////////////////////////// parse /////////////////////////////
-static Value* parse_expr(BasicBlock *bb, Function * f);
+static Value* parse_expr();
 
-static Value* parse_arith(BasicBlock *bb, Function *f, Token t){
-    Value *l = parse_expr(bb, f);
-    Value *r = parse_expr(bb, f);
+static Value* parse_arith(Token t){
+    Value *l = parse_expr();
+    Value *r = parse_expr();
     Token rpar = lex_one();
     if (Token::rparen != rpar.k){
         error("expected right paren, got something else.");
     }
     Value *result;
     if (Token::add == t.k){
-        result = BinaryOperator::CreateAdd(l, r, "arithresult", bb);
+        result = Builder.CreateAdd(l, r, "+");
     } else if (Token::sub == t.k){
-        result = BinaryOperator::CreateSub(l, r, "arithresult", bb);
+        result = Builder.CreateSub(l, r, "-");
     } else if (Token::mul == t.k){
-        result = BinaryOperator::CreateMul(l, r, "arithresult", bb);
+        result = Builder.CreateMul(l, r, "*");
     } else if (Token::div == t.k){
-        //error("not yet implemented");
-        result = BinaryOperator::CreateSDiv(l, r, "arithresult", bb);
+        result = Builder.CreateSDiv(l, r, "/");
     } else if (Token::mod == t.k){
-        error("mod not yet implemented");
-        //result = BinaryOperator::CreateMod(l, r, "arithresult", bb);
+        result = Builder.CreateSRem(l, r, "%");
     } else {
         error("expected arithmetic operator");
     }
     return result;
 }
 
-static Value* parse_compare(BasicBlock *bb, Function *f, Token t){
-    Value *l = parse_expr(bb, f);
-    Value *r = parse_expr(bb, f);
+static Value* parse_compare(Token t){
+    Value *l = parse_expr();
+    Value *r = parse_expr();
     Token rpar = lex_one();
     if (Token::rparen != rpar.k){
         error("expected right paren, got something else.");
@@ -196,57 +207,56 @@ static Value* parse_compare(BasicBlock *bb, Function *f, Token t){
 
     Value *ret;
     if (Token::eq == t.k){
-        ret = new ICmpInst(*bb, ICmpInst::ICMP_EQ, l, r, "cond");
+        ret = Builder.CreateICmpEQ(l, r, "==");
     } else if (Token::neq == t.k){
-        ret = new ICmpInst(*bb, ICmpInst::ICMP_NE, l, r, "cond");
+        ret = Builder.CreateICmpNE(l, r, "!=");
     } else if (Token::lt == t.k){
-        ret = new ICmpInst(*bb, ICmpInst::ICMP_SLT, l, r, "cond");
+        ret = Builder.CreateICmpSLT(l, r, "<");
     } else if (Token::gt == t.k){
-        ret = new ICmpInst(*bb, ICmpInst::ICMP_SGT, l, r, "cond");
+        ret = Builder.CreateICmpSGT(l, r, ">");
     } else if (Token::lte == t.k){
-        ret = new ICmpInst(*bb, ICmpInst::ICMP_SLE, l, r, "cond");
+        ret = Builder.CreateICmpSLE(l, r, "<=");
     } else if (Token::gte == t.k){
-        ret = new ICmpInst(*bb, ICmpInst::ICMP_SGE, l, r, "cond");
+        ret = Builder.CreateICmpSGE(l, r, ">=");
     } else {
         error("expected equality operator");
     }
     return ret;
 }
 
-static Value* parse_bool_expr(BasicBlock *bb, Function *f){
+static Value* parse_bool_expr(){
     Token t = lex_one();
     if (Token::boolconst == t.k){
         Value *c = ConstantInt::get(Type::getInt1Ty(C), t.val);
         return c;
     } else if (Token::lparen == t.k){
         t = lex_one();
-        return parse_compare(bb, f, t);
+        return parse_compare(t);
     }
 }
 
-static Value* parse_ift(BasicBlock *bb, Function *f){
-    Value *test = parse_bool_expr(bb, f);
-    Value *iftrue = parse_expr(bb, f);
-    Value *iffalse = parse_expr(bb, f);
+static Value* parse_ift(){
+    Value *test = parse_bool_expr();
+    Value *iftrue = parse_expr();
+    Value *iffalse = parse_expr();
     Token rpar = lex_one();
     if (Token::rparen != rpar.k){
         error("expected right paren, got something else.");
     }
-    Value *result;
-    error("if not yet implemented");
-    return result;
+    return Builder.CreateSelect(test, iftrue, iffalse, "if");
 }
 
-static Value* parse_expr(BasicBlock *bb, Function * f){
+static Value* parse_expr(){
     Token t = lex_one();
     if (Token::lparen == t.k){
         t = lex_one();
         if(Token::ift == t.k){
-            return parse_ift(bb, f);
+            return parse_ift();
         } else {
-            return parse_arith(bb, f, t);
+            return parse_arith(t);
         }
     } else if (Token::programarg == t.k){
+        Function *f = Builder.GetInsertBlock()->getParent();
         auto arg_iter = f->arg_begin();
         // Oh, man, I don't know how to use C++ iterators...
         for(int i = 0; i < t.val; ++i){
@@ -275,8 +285,12 @@ static int compile() {
   Builder.SetInsertPoint(BB);
 
   /////////////////////////// begin my code
-  Value *v = parse_expr(BB, F);
-  ReturnInst::Create(C, v, BB);
+  Value *v = parse_expr();
+  ReturnInst::Create(C, v, Builder.GetInsertBlock());
+  Token t = lex_one();
+  if (Token::eof != t.k){
+      error("Expected EOF, got something else.");
+  }
   /////////////////////////// end my code
 
   //Value *RetVal = ConstantInt::get(C, APInt(64, 0));
