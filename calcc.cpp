@@ -46,7 +46,7 @@ static void ignore_to_newline(){
 }
 
 static int64_t read_int_const(int64_t so_far){
-    int c = '0';
+    int c = getchar();
     while(c >= '0' && c <= '9'){
         so_far = 10*so_far + c-'0';
         c = getchar();
@@ -180,32 +180,72 @@ static Value* parse_arith(BasicBlock *bb, Function *f, Token t){
     } else if (Token::mod == t.k){
         error("mod not yet implemented");
         //result = BinaryOperator::CreateMod(l, r, "arithresult", bb);
+    } else {
+        error("expected arithmetic operator");
     }
     return result;
 }
 
-static Value* parse_lparen(BasicBlock *bb, Function * f){
-    Token t = lex_one();
-    if (Token::add == t.k){
-        return parse_arith(bb, f, t);
-    } else if (Token::sub == t.k){
-        return parse_arith(bb, f, t);
-    } else if (Token::mul == t.k){
-        return parse_arith(bb, f, t);
-    } else if (Token::div == t.k){
-        return parse_arith(bb, f, t);
-    } else if (Token::mod == t.k){
-        return parse_arith(bb, f, t);
-    } else if (Token::ift == t.k){
-        error("if not yet implemented");
-        //parse_if();
+static Value* parse_compare(BasicBlock *bb, Function *f, Token t){
+    Value *l = parse_expr(bb, f);
+    Value *r = parse_expr(bb, f);
+    Token rpar = lex_one();
+    if (Token::rparen != rpar.k){
+        error("expected right paren, got something else.");
     }
+
+    Value *ret;
+    if (Token::eq == t.k){
+        ret = new ICmpInst(*bb, ICmpInst::ICMP_EQ, l, r, "cond");
+    } else if (Token::neq == t.k){
+        ret = new ICmpInst(*bb, ICmpInst::ICMP_NE, l, r, "cond");
+    } else if (Token::lt == t.k){
+        ret = new ICmpInst(*bb, ICmpInst::ICMP_SLT, l, r, "cond");
+    } else if (Token::gt == t.k){
+        ret = new ICmpInst(*bb, ICmpInst::ICMP_SGT, l, r, "cond");
+    } else if (Token::lte == t.k){
+        ret = new ICmpInst(*bb, ICmpInst::ICMP_SLE, l, r, "cond");
+    } else if (Token::gte == t.k){
+        ret = new ICmpInst(*bb, ICmpInst::ICMP_SGE, l, r, "cond");
+    } else {
+        error("expected equality operator");
+    }
+    return ret;
+}
+
+static Value* parse_bool_expr(BasicBlock *bb, Function *f){
+    Token t = lex_one();
+    if (Token::boolconst == t.k){
+        Value *c = ConstantInt::get(Type::getInt1Ty(C), t.val);
+        return c;
+    } else if (Token::lparen == t.k){
+        t = lex_one();
+        return parse_compare(bb, f, t);
+    }
+}
+
+static Value* parse_ift(BasicBlock *bb, Function *f){
+    Value *test = parse_bool_expr(bb, f);
+    Value *iftrue = parse_expr(bb, f);
+    Value *iffalse = parse_expr(bb, f);
+    Token rpar = lex_one();
+    if (Token::rparen != rpar.k){
+        error("expected right paren, got something else.");
+    }
+    Value *result;
+    error("if not yet implemented");
+    return result;
 }
 
 static Value* parse_expr(BasicBlock *bb, Function * f){
     Token t = lex_one();
     if (Token::lparen == t.k){
-        return parse_lparen(bb, f);
+        t = lex_one();
+        if(Token::ift == t.k){
+            return parse_ift(bb, f);
+        } else {
+            return parse_arith(bb, f, t);
+        }
     } else if (Token::programarg == t.k){
         auto arg_iter = f->arg_begin();
         // Oh, man, I don't know how to use C++ iterators...
