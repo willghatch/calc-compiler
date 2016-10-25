@@ -236,14 +236,41 @@ static Value* parse_bool_expr(){
 }
 
 static Value* parse_ift(){
+
     Value *test = parse_bool_expr();
+
+    BasicBlock *startbb = Builder.GetInsertBlock();
+    Function *f = startbb->getParent();
+    BasicBlock *tblock = BasicBlock::Create(C, "true", f);
+    BasicBlock *fblock = BasicBlock::Create(C, "false");
+    BasicBlock *mergebb = BasicBlock::Create(C, "merge");
+
+    Builder.CreateCondBr(test, tblock, fblock);
+
+    Builder.SetInsertPoint(tblock);
     Value *iftrue = parse_expr();
+    Builder.CreateBr(mergebb);
+    BasicBlock *fromtrue = Builder.GetInsertBlock();
+
+    f->getBasicBlockList().push_back(fblock);
+    Builder.SetInsertPoint(fblock);
     Value *iffalse = parse_expr();
+    Builder.CreateBr(mergebb);
+    BasicBlock *fromfalse = Builder.GetInsertBlock();
+
+
+    Builder.SetInsertPoint(mergebb);
+    f->getBasicBlockList().push_back(mergebb);
+    PHINode *pn = Builder.CreatePHI(Type::getInt64Ty(C), 2, "ifret");
+    pn->addIncoming(iftrue, fromtrue);
+    pn->addIncoming(iffalse, fromfalse);
+
     Token rpar = lex_one();
     if (Token::rparen != rpar.k){
         error("expected right paren, got something else.");
     }
-    return Builder.CreateSelect(test, iftrue, iffalse, "if");
+
+    return pn;
 }
 
 static Value* parse_expr(){
