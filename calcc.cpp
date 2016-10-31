@@ -16,6 +16,7 @@ using namespace std;
 static LLVMContext C;
 static IRBuilder<NoFolder> Builder(C);
 static std::unique_ptr<Module> M = llvm::make_unique<Module>("calc", C);
+static std::vector<Value*> mvars = vector<Value*>();
 
 /////////////////////// begin my code
 #include <stdio.h>
@@ -149,9 +150,15 @@ static Token lex_one(){
         }
     } else if ('a' == c){
         int64_t num = read_int_const(0,false);
+        if (num < 0 || num > 5){
+            error("argument index out of range");
+        }
         return {Token::programarg,num};
     } else if ('m' == c){
         int64_t num = read_int_const(0,false);
+        if (num < 0 || num > 9){
+            error("variable index out of range");
+        }
         return {Token::mvar,num};
     } else if ('f' == c){
         // for now, assume it's false
@@ -294,6 +301,45 @@ static Value* parse_ift(){
     return pn;
 }
 
+static Value* parse_whilet(){
+
+    BasicBlock *origbb = Builder.GetInsertBlock();
+    Function *f = origbb->getParent();
+    BasicBlock *testbb = BasicBlock::Create(C, "test");
+    BasicBlock *bodybb = BasicBlock::Create(C, "body");
+    BasicBlock *exitbb = BasicBlock::Create(C, "exit");
+
+    Builder.CreateBr(testbb);
+    f->getBasicBlockList().push_back(testbb);
+    Builder.SetInsertPoint(testbb);
+    PHINode * exitv = Builder.CreatePHI(Type::getInt64Ty(C), 2, "loop value");
+    exitv->addIncoming(ConstantInt::get(Type::getInt64Ty(C), 0), origbb);
+    Value *test = parse_bool_expr();
+    BasicBlock *fromtestbb = Builder.GetInsertBlock();
+    Builder.CreateCondBr(test, bodybb, exitbb);
+
+    f->getBasicBlockList().push_back(bodybb);
+    Builder.SetInsertPoint(bodybb);
+    Value *bodyexpr = parse_expr();
+    Builder.CreateBr(testbb);
+    BasicBlock *frombodybb = Builder.GetInsertBlock();
+    exitv->addIncoming(bodyexpr, frombodybb);
+
+    f->getBasicBlockList().push_back(exitbb);
+    Builder.SetInsertPoint(exitbb);
+    // Add a phi node with only one incoming edge, because I'm not sure
+    // of any other way to just tell it to reference a previous value.
+    PHINode * output = Builder.CreatePHI(Type::getInt64Ty(C), 1, "return");
+    output->addIncoming(exitv, fromtestbb);
+
+    Token rpar = lex_one();
+    if (Token::rparen != rpar.k){
+        error("expected right paren, got something else.");
+    }
+
+    return output;
+}
+
 static Value* parse_expr(){
     Token t = lex_one();
     if (Token::lparen == t.k){
@@ -309,18 +355,23 @@ static Value* parse_expr(){
             }
             return r;
         } else if (Token::set == t.k){
-            error("unimplemented");
-            //return parse_set(t);
+            Value *v = parse_expr();
+            // just lex the mvar -- parsing it will emit a load instruction.
+            Token mvar = lex_one();
+            Token rpar = lex_one();
+            if (Token::rparen != rpar.k){
+                error("expected right paren, got something else.");
+            } else if (Token::mvar != mvar.k){
+                error("expected variable name in set expression, got something else");
+            }
+            Value *store = Builder.CreateStore(v, mvars[mvar.val]);
+            return v;
         } else if (Token::whilet == t.k){
-            error("unimplemented");
-            //return parse_whilet(t);
+            return parse_whilet();
         } else {
             return parse_arith(t);
         }
     } else if (Token::programarg == t.k){
-        if (t.val > 5 || t.val < 0){
-            error("program argument out of bounds");
-        }
         Function *f = Builder.GetInsertBlock()->getParent();
         auto arg_iter = f->arg_begin();
         // Oh, man, I don't know how to use C++ iterators...
@@ -334,7 +385,8 @@ static Value* parse_expr(){
         if (t.val > 9 || t.val < 0){
             error("variable name out of bounds");
         }
-        error("unimplemented");
+        Value *load = Builder.CreateLoad(mvars[t.val]);
+        return load;
     } else if (Token::intconst == t.k){
         Value *c = ConstantInt::get(Type::getInt64Ty(C), t.val);
         return c;
@@ -355,6 +407,15 @@ static int compile() {
   Builder.SetInsertPoint(BB);
 
   /////////////////////////// begin my code
+
+  // set up memory for 10 mutable variables
+  Value *zeroconst = ConstantInt::get(Type::getInt64Ty(C), 0);
+  for(int i=0; i<10; ++i){
+      Value *loc = Builder.CreateAlloca(Type::getInt64Ty(C));
+      Builder.CreateStore(zeroconst, loc);
+      mvars.push_back(loc);
+  }
+
   Value *v = parse_expr();
   ReturnInst::Create(C, v, Builder.GetInsertBlock());
   Token t = lex_one();
@@ -365,8 +426,8 @@ static int compile() {
 
   //Value *RetVal = ConstantInt::get(C, APInt(64, 0));
   //Builder.CreateRet(RetVal);
-  assert(!verifyModule(*M, &outs()));
   M->dump();
+  assert(!verifyModule(*M, &outs()));
   return 0;
 }
 
