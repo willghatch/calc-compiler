@@ -149,13 +149,15 @@ static Token lex_one(){
             error("expected = character after =");
         }
     } else if ('a' == c){
-        int64_t num = read_int_const(0,false);
+        c = getchar();
+        int64_t num = c - '0';
         if (num < 0 || num > 5){
             error("argument index out of range");
         }
         return {Token::programarg,num};
     } else if ('m' == c){
-        int64_t num = read_int_const(0,false);
+        c = getchar();
+        int64_t num = c - '0';
         if (num < 0 || num > 9){
             error("variable index out of range");
         }
