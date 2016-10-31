@@ -23,7 +23,8 @@ static std::unique_ptr<Module> M = llvm::make_unique<Module>("calc", C);
 
 struct Token {
     enum Tokenkind {lparen, rparen, intconst, add, sub, mul, div, mod, ift,
-                    gt, gte, lt, lte, eq, neq, boolconst, programarg, eof};
+                    gt, gte, lt, lte, eq, neq, boolconst, programarg, eof,
+                    set, seq, whilet, mvar};
     Tokenkind k;
     int64_t val;
 };
@@ -149,6 +150,9 @@ static Token lex_one(){
     } else if ('a' == c){
         int64_t num = read_int_const(0,false);
         return {Token::programarg,num};
+    } else if ('m' == c){
+        int64_t num = read_int_const(0,false);
+        return {Token::mvar,num};
     } else if ('f' == c){
         // for now, assume it's false
         (getchar() == 'a' && getchar() == 'l' && getchar() == 's' && getchar() == 'e')
@@ -163,6 +167,21 @@ static Token lex_one(){
         // for now, assume it's if
         (getchar() == 'f') || error("error lexing true");
         return {Token::ift,0};
+    } else if ('s' == c){
+        (getchar() == 'e') || error("error lexing seq or set");
+        c = getchar();
+        if ('q' == c){
+            return {Token::seq,0};
+        } else if ('t' == c){
+            return {Token::set,0};
+        } else {
+            error("error lexing seq or set");
+        }
+    } else if ('w' == c){
+        // for now, assume it's true
+        (getchar() == 'h' && getchar() == 'i' && getchar() == 'l' && getchar() == 'e')
+            || error("error lexing true");
+        return {Token::whilet,0};
     } else if (EOF == c){
         return {Token::eof,0};
     } else {
@@ -281,10 +300,27 @@ static Value* parse_expr(){
         t = lex_one();
         if(Token::ift == t.k){
             return parse_ift();
+        } else if (Token::seq == t.k){
+            Value *l = parse_expr();
+            Value *r = parse_expr();
+            Token rparen = lex_one();
+            if (Token::rparen != rparen.k){
+                error("expected right paren, got something else.");
+            }
+            return r;
+        } else if (Token::set == t.k){
+            error("unimplemented");
+            //return parse_set(t);
+        } else if (Token::whilet == t.k){
+            error("unimplemented");
+            //return parse_whilet(t);
         } else {
             return parse_arith(t);
         }
     } else if (Token::programarg == t.k){
+        if (t.val > 5 || t.val < 0){
+            error("program argument out of bounds");
+        }
         Function *f = Builder.GetInsertBlock()->getParent();
         auto arg_iter = f->arg_begin();
         // Oh, man, I don't know how to use C++ iterators...
@@ -294,6 +330,11 @@ static Value* parse_expr(){
         // &* is what the fibonacci example does... maybe * is overloaded for iterators?
         Argument *a = &*arg_iter;
         return a;
+    } else if (Token::mvar == t.k){
+        if (t.val > 9 || t.val < 0){
+            error("variable name out of bounds");
+        }
+        error("unimplemented");
     } else if (Token::intconst == t.k){
         Value *c = ConstantInt::get(Type::getInt64Ty(C), t.val);
         return c;
