@@ -28,9 +28,35 @@ struct Token {
                     set, seq, whilet, mvar};
     Tokenkind k;
     int64_t val;
+    int64_t line;
+    int64_t col;
+    int64_t pos;
 };
 
-static int ungetchar(int c){
+// position and line both start at 1, but emacs and racket both have column start at 0.
+// since I increment them before anything, they need to start 1 lower.
+static int64_t curpos = 0;
+static int64_t curline = 0;
+static int64_t curcol = -1;
+static int64_t last_line_col = -999;
+
+static int cget(){
+    int c = getchar();
+    ++curpos;
+    ++curcol;
+    if ('\n' == c){
+        ++curline;
+        last_line_col = curcol;
+        curcol = -1;
+    }
+    return c;
+}
+static int cunget(int c){
+    --curpos;
+    if ('\n' == c){
+        --curline;
+        curcol = last_line_col - 1;
+    }
     return ungetc(c,stdin);
 }
 
@@ -44,13 +70,13 @@ static int error(char* msg){
 //        to get a big buffer of the characters, rather than using getc and ungetc.
 
 static void ignore_to_newline(){
-    char c = getchar();
-    for(; c != '\n'; c = getchar());
-    ungetchar(c);
+    char c = cget();
+    for(; c != '\n'; c = cget());
+    cunget(c);
 }
 
 static int64_t read_int_const(int64_t so_far, bool negativep){
-    int c = getchar();
+    int c = cget();
     int64_t last;
     while(c >= '0' && c <= '9'){
         last = so_far;
@@ -66,16 +92,16 @@ static int64_t read_int_const(int64_t so_far, bool negativep){
                 error("integer overflow positive to negative");
             }
         }
-        c = getchar();
+        c = cget();
     }
-    ungetchar(c);
+    cunget(c);
     return so_far;
 }
 
 static Token lex_one(){
     static int first_line = 1;
     // a very very bad lexer
-    int c = getchar();
+    int c = cget();
     //printf("in lexer with %c\n");
     if (first_line && '#' == c){
         first_line = 0;
@@ -83,116 +109,116 @@ static Token lex_one(){
         return lex_one();
     } else if ('\n' == c){
         first_line = 0;
-        c = getchar();
+        c = cget();
         if ('#' == c){
             ignore_to_newline();
         } else {
-            ungetchar(c);
+            cunget(c);
         }
         // Tail call to self.  Will it be optimized into a goto?
         return lex_one();
     } else if (' ' == c || '\t' == c){
         return lex_one();
     } else if ('(' == c){
-        return {Token::lparen,0};
+        return {Token::lparen,0,curline,curcol,curpos};
     } else if (')' == c){
-        return {Token::rparen,0};
+        return {Token::rparen,0,curline,curcol,curpos};
     } else if (c >= '0' && c <= '9'){
         int64_t num = read_int_const(c-'0',false);
-        return {Token::intconst,num};
+        return {Token::intconst,num,curline,curcol,curpos};
     } else if ('-' == c){
-        c = getchar();
+        c = cget();
         if (c >= '0' && c <= '9'){
             int64_t num = read_int_const(-(c - '0'),true);
-            Token ret = {Token::intconst, num};
+            Token ret = {Token::intconst, num,curline,curcol,curpos};
             return ret;
         } else {
-            ungetchar(c);
-            return {Token::sub,0};
+            cunget(c);
+            return {Token::sub,0,curline,curcol,curpos};
         }
     } else if ('+' == c){
-        return {Token::add,0};
+        return {Token::add,0,curline,curcol,curpos};
     } else if ('*' == c){
-        return {Token::mul,0};
+        return {Token::mul,0,curline,curcol,curpos};
     } else if ('/' == c){
-        return {Token::div,0};
+        return {Token::div,0,curline,curcol,curpos};
     } else if ('%' == c){
-        return {Token::mod,0};
+        return {Token::mod,0,curline,curcol,curpos};
     } else if ('>' == c){
-        c = getchar();
+        c = cget();
         if ('=' == c){
-            return {Token::gte,0};
+            return {Token::gte,0,curline,curcol,curpos};
         } else {
-            ungetchar(c);
-            return {Token::gt,0};
+            cunget(c);
+            return {Token::gt,0,curline,curcol,curpos};
         }
     } else if ('<' == c){
-        c = getchar();
+        c = cget();
         if ('=' == c){
-            return {Token::lte,0};
+            return {Token::lte,0,curline,curcol,curpos};
         } else {
-            ungetchar(c);
-            return {Token::lt,0};
+            cunget(c);
+            return {Token::lt,0,curline,curcol,curpos};
         }
     } else if ('!' == c){
-        c = getchar();
+        c = cget();
         if ('=' == c){
-            return {Token::neq,0};
+            return {Token::neq,0,curline,curcol,curpos};
         } else {
             error("expected = character after !");
         }
     } else if ('=' == c){
-        c = getchar();
+        c = cget();
         if ('=' == c){
-            return {Token::eq,0};
+            return {Token::eq,0,curline,curcol,curpos};
         } else {
             error("expected = character after =");
         }
     } else if ('a' == c){
-        c = getchar();
+        c = cget();
         int64_t num = c - '0';
         if (num < 0 || num > 5){
             error("argument index out of range");
         }
-        return {Token::programarg,num};
+        return {Token::programarg,num,curline,curcol,curpos};
     } else if ('m' == c){
-        c = getchar();
+        c = cget();
         int64_t num = c - '0';
         if (num < 0 || num > 9){
             error("variable index out of range");
         }
-        return {Token::mvar,num};
+        return {Token::mvar,num,curline,curcol,curpos};
     } else if ('f' == c){
         // for now, assume it's false
-        (getchar() == 'a' && getchar() == 'l' && getchar() == 's' && getchar() == 'e')
+        (cget() == 'a' && cget() == 'l' && cget() == 's' && cget() == 'e')
             || error("error lexing false");
-        return {Token::boolconst,0};
+        return {Token::boolconst,0,curline,curcol,curpos};
     } else if ('t' == c){
         // for now, assume it's true
-        (getchar() == 'r' && getchar() == 'u' && getchar() == 'e')
+        (cget() == 'r' && cget() == 'u' && cget() == 'e')
             || error("error lexing true");
-        return {Token::boolconst,1};
+        return {Token::boolconst,1,curline,curcol,curpos};
     } else if ('i' == c){
         // for now, assume it's if
-        (getchar() == 'f') || error("error lexing true");
-        return {Token::ift,0};
+        (cget() == 'f') || error("error lexing true");
+        return {Token::ift,0,curline,curcol,curpos};
     } else if ('s' == c){
-        (getchar() == 'e') || error("error lexing seq or set");
-        c = getchar();
+        (cget() == 'e') || error("error lexing seq or set");
+        c = cget();
         if ('q' == c){
-            return {Token::seq,0};
+            return {Token::seq,0,curline,curcol,curpos};
         } else if ('t' == c){
-            return {Token::set,0};
+            return {Token::set,0,curline,curcol,curpos};
         } else {
             error("error lexing seq or set");
         }
     } else if ('w' == c){
         // for now, assume it's true
-        (getchar() == 'h' && getchar() == 'i' && getchar() == 'l' && getchar() == 'e')
+        (cget() == 'h' && cget() == 'i' && cget() == 'l' && cget() == 'e')
             || error("error lexing true");
-        return {Token::whilet,0};
+        return {Token::whilet,0,curline,curcol,curpos};
     } else if (EOF == c){
-        return {Token::eof,0};
+        return {Token::eof,0,curline,curcol,curpos};
     } else {
         error("unknown error lexing");
     }
