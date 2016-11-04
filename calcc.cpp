@@ -17,6 +17,15 @@ static LLVMContext C;
 static IRBuilder<NoFolder> Builder(C);
 static std::unique_ptr<Module> M = llvm::make_unique<Module>("calc", C);
 static std::vector<Value*> mvars = vector<Value*>();
+static Function *sadd_f = Intrinsic::getDeclaration(&*M, Intrinsic::sadd_with_overflow, ArrayRef<Type *>(Type::getInt64Ty(C)));
+static Function *ssub_f = Intrinsic::getDeclaration(&*M, Intrinsic::ssub_with_overflow, ArrayRef<Type *>(Type::getInt64Ty(C)));
+static Function *smul_f = Intrinsic::getDeclaration(&*M, Intrinsic::smul_with_overflow, ArrayRef<Type *>(Type::getInt64Ty(C)));
+static Value *overflow_fail
+= M->getOrInsertFunction("overflow_fail",
+                         FunctionType::get(Type::getVoidTy(C),
+                                           ArrayRef<Type *>(Type::getInt64Ty(C)),
+                                           false));
+
 
 /////////////////////// begin my code
 #include <stdio.h>
@@ -239,23 +248,58 @@ static Value* parse_arith(Token t){
     }
     Value *result = nullptr;
     if (checkoverflow) {
+        Value *zeroconst = ConstantInt::get(Type::getInt64Ty(C), 0);
+        Value *oneconst = ConstantInt::get(Type::getInt64Ty(C), 1);
+        Value *negoneconst = ConstantInt::get(Type::getInt64Ty(C), -1);
+        Value *minconst = ConstantInt::get(Type::getInt64Ty(C), LONG_MIN);
+        Value *errargs[1] = {ConstantInt::get(Type::getInt64Ty(C), t.pos)};
+        Value *args[2] = {l,r};
+        Value *check;
+
+        BasicBlock *startbb = Builder.GetInsertBlock();
+        Function *f = startbb->getParent();
+        BasicBlock *errblock = BasicBlock::Create(C, "error");
+        BasicBlock *noerrblock = BasicBlock::Create(C, "noerror");
+
         if (Token::add == t.k){
-            // TODO - check overflow
-            result = Builder.CreateAdd(l, r, "+");
+            Value *res = Builder.CreateCall(sadd_f, ArrayRef<Value *>(args, 2));
+            check = Builder.CreateExtractValue(res, ArrayRef<unsigned>(1));
+            result = Builder.CreateExtractValue(res, ArrayRef<unsigned>(0));
         } else if (Token::sub == t.k){
-            // TODO - check overflow
-            result = Builder.CreateSub(l, r, "-");
+            Value *res = Builder.CreateCall(ssub_f, ArrayRef<Value *>(args, 2));
+            check = Builder.CreateExtractValue(res, ArrayRef<unsigned>(1));
+            result = Builder.CreateExtractValue(res, ArrayRef<unsigned>(0));
         } else if (Token::mul == t.k){
-            // TODO - check overflow
-            result = Builder.CreateMul(l, r, "*");
+            Value *res = Builder.CreateCall(smul_f, ArrayRef<Value *>(args, 2));
+            check = Builder.CreateExtractValue(res, ArrayRef<unsigned>(1));
+            result = Builder.CreateExtractValue(res, ArrayRef<unsigned>(0));
         } else if (Token::div == t.k){
-            // TODO - check for div by 0, LONG_MIN/-1
-            result = Builder.CreateSDiv(l, r, "/");
+            Value *check0 = Builder.CreateICmpEQ(r, zeroconst, "==");
+            Value *checkneg1 = Builder.CreateICmpEQ(r, negoneconst, "==");
+            Value *checkmin = Builder.CreateICmpEQ(l, minconst, "==");
+            Value *negand = Builder.CreateAnd(checkneg1, checkmin);
+            check = Builder.CreateOr(negand, check0);
         } else if (Token::mod == t.k){
-            // TODO - check for mod by 0
-            result = Builder.CreateSRem(l, r, "%");
+            check = Builder.CreateICmpEQ(r, zeroconst, "==");
         } else {
             error("expected arithmetic operator");
+        }
+
+        Builder.CreateCondBr(check, errblock, noerrblock);
+        f->getBasicBlockList().push_back(errblock);
+        Builder.SetInsertPoint(errblock);
+        Value *errret = Builder.CreateCall(overflow_fail, ArrayRef<Value *>(errargs, 1));
+        // make a return instruction, because the block needs a terminator, and
+        // it should abort in the called function.
+        ReturnInst::Create(C, zeroconst, Builder.GetInsertBlock());
+        f->getBasicBlockList().push_back(noerrblock);
+        Builder.SetInsertPoint(noerrblock);
+
+        // now do the div/mod or make a phi node
+        if (Token::div == t.k){
+            result = Builder.CreateSDiv(l, r, "/");
+        } else if (Token::mod == t.k){
+            result = Builder.CreateSRem(l, r, "%");
         }
     } else {
         if (Token::add == t.k){
@@ -377,17 +421,13 @@ static Value* parse_whilet(){
 
     f->getBasicBlockList().push_back(exitbb);
     Builder.SetInsertPoint(exitbb);
-    // Add a phi node with only one incoming edge, because I'm not sure
-    // of any other way to just tell it to reference a previous value.
-    PHINode * output = Builder.CreatePHI(Type::getInt64Ty(C), 1, "return");
-    output->addIncoming(exitv, fromtestbb);
 
     Token rpar = lex_one();
     if (Token::rparen != rpar.k){
         error("expected right paren, got something else.");
     }
 
-    return output;
+    return exitv;
 }
 
 static Value* parse_expr(){
