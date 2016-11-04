@@ -39,6 +39,7 @@ static int64_t curpos = 0;
 static int64_t curline = 0;
 static int64_t curcol = -1;
 static int64_t last_line_col = -999;
+static bool checkoverflow = false;
 
 static int cget(){
     int c = getchar();
@@ -237,18 +238,39 @@ static Value* parse_arith(Token t){
         error("expected right paren, got something else.");
     }
     Value *result = nullptr;
-    if (Token::add == t.k){
-        result = Builder.CreateAdd(l, r, "+");
-    } else if (Token::sub == t.k){
-        result = Builder.CreateSub(l, r, "-");
-    } else if (Token::mul == t.k){
-        result = Builder.CreateMul(l, r, "*");
-    } else if (Token::div == t.k){
-        result = Builder.CreateSDiv(l, r, "/");
-    } else if (Token::mod == t.k){
-        result = Builder.CreateSRem(l, r, "%");
+    if (checkoverflow) {
+        if (Token::add == t.k){
+            // TODO - check overflow
+            result = Builder.CreateAdd(l, r, "+");
+        } else if (Token::sub == t.k){
+            // TODO - check overflow
+            result = Builder.CreateSub(l, r, "-");
+        } else if (Token::mul == t.k){
+            // TODO - check overflow
+            result = Builder.CreateMul(l, r, "*");
+        } else if (Token::div == t.k){
+            // TODO - check for div by 0, LONG_MIN/-1
+            result = Builder.CreateSDiv(l, r, "/");
+        } else if (Token::mod == t.k){
+            // TODO - check for mod by 0
+            result = Builder.CreateSRem(l, r, "%");
+        } else {
+            error("expected arithmetic operator");
+        }
     } else {
-        error("expected arithmetic operator");
+        if (Token::add == t.k){
+            result = Builder.CreateAdd(l, r, "+");
+        } else if (Token::sub == t.k){
+            result = Builder.CreateSub(l, r, "-");
+        } else if (Token::mul == t.k){
+            result = Builder.CreateMul(l, r, "*");
+        } else if (Token::div == t.k){
+            result = Builder.CreateSDiv(l, r, "/");
+        } else if (Token::mod == t.k){
+            result = Builder.CreateSRem(l, r, "%");
+        } else {
+            error("expected arithmetic operator");
+        }
     }
     return result;
 }
@@ -261,7 +283,7 @@ static Value* parse_compare(Token t){
         error("expected right paren, got something else.");
     }
 
-    Value *ret;
+    Value *ret = nullptr;
     if (Token::eq == t.k){
         ret = Builder.CreateICmpEQ(l, r, "==");
     } else if (Token::neq == t.k){
@@ -459,4 +481,20 @@ static int compile() {
   return 0;
 }
 
-int main(void) { return compile(); }
+int main(int argc, char **argv) {
+
+    if(argc > 1){
+        if(!strcmp(argv[1], "-check")){
+            checkoverflow = true;
+        } else {
+            printf("usage: %s [-check]\n", argv[0]);
+            exit(1);
+        }
+        if (argc > 2){
+            printf("usage: %s [-check]\n", argv[0]);
+            exit(1);
+        }
+    }
+
+    return compile();
+}
