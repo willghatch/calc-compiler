@@ -60,7 +60,7 @@ static int cunget(int c){
     return ungetc(c,stdin);
 }
 
-static int error(char* msg){
+static int error(const char* msg){
     puts(msg);
     exit(1);
 }
@@ -236,7 +236,7 @@ static Value* parse_arith(Token t){
     if (Token::rparen != rpar.k){
         error("expected right paren, got something else.");
     }
-    Value *result;
+    Value *result = nullptr;
     if (Token::add == t.k){
         result = Builder.CreateAdd(l, r, "+");
     } else if (Token::sub == t.k){
