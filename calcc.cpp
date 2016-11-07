@@ -44,7 +44,8 @@ struct Token {
 
 // position and line both start at 1, but emacs and racket both have column start at 0.
 // since I increment them before anything, they need to start 1 lower.
-static int64_t curpos = 0;
+///// For our assignment it has been decided that character position starts at 0.
+static int64_t curpos = -1;
 static int64_t curline = 0;
 static int64_t curcol = -1;
 static int64_t last_line_col = -999;
